@@ -27,6 +27,10 @@
 | FR-07 | Hidden compartment shall not be visible when lid is removed | Maintains secret |
 | FR-08 | False bottom shall rest flush on internal ledge | No visible gap revealing compartment |
 | FR-09 | Pull ring shall be recessed or flush with tray surface | Minimizes detection |
+| FR-13 | Coin pile shall cover and conceal the pull ring | Hides removal mechanism |
+| FR-14 | Coin pile shall be removable by hand to access pull ring | User can reveal ring when needed |
+| FR-15 | Coin pile shall appear as stacked/scattered gold coins | Thematic prop for D&D |
+| FR-16 | Coin pile shall be printed as single fused piece | No loose parts to lose |
 
 ### 1.3 Assembly
 
@@ -89,6 +93,16 @@
 | NFR-23 | Lid shall have curved barrel-top profile | Classic treasure chest look |
 | NFR-24 | Proportions shall match D&D miniature scale (28-32mm) | Visual consistency with minis |
 
+### 2.6 Coin Pile
+
+| ID | Requirement | Value | Rationale |
+|----|-------------|-------|-----------|
+| NFR-25 | Coin diameter | 4.0 mm | Scale-appropriate gold coins |
+| NFR-26 | Coin thickness | 0.8 mm | Visible stacking, printable |
+| NFR-27 | Pile footprint | ≤ 18 × 14 mm | Fits inside chest with clearance |
+| NFR-28 | Pile height | ≤ 8 mm | Clears lid when closed |
+| NFR-29 | Coin pile shall print without supports | Coins fused, no overhangs > 45° |
+
 ---
 
 ## 3. Components
@@ -99,6 +113,7 @@
 | 2 | lid | Curved barrel-top, friction fits | FR-01, FR-02, FR-11, FR-12, NFR-04, NFR-23 |
 | 3 | false_bottom | Tray concealing hidden compartment | FR-04, FR-05, FR-07, FR-08, NFR-10, NFR-14 |
 | 4 | pull_ring | Ring for lifting false bottom | FR-06, FR-09, NFR-11, NFR-12 |
+| 5 | coin_pile | Fused pile of gold coins, covers pull ring | FR-13, FR-14, FR-15, FR-16, NFR-25–29 |
 
 ---
 
@@ -118,6 +133,8 @@
 | `ring_od` | 6 | mm | NFR-12 |
 | `ring_wire` | 1.6 | mm | NFR-11 |
 | `tray_thick` | 1.6 | mm | NFR-10 |
+| `coin_dia` | 4.0 | mm | NFR-25 |
+| `coin_thick` | 0.8 | mm | NFR-26 |
 
 ---
 
@@ -132,6 +149,9 @@ treasure-chest_{component}_v01_pla.stl
 | chest_body | `treasure-chest_chest-body_v01_pla.stl` |
 | lid | `treasure-chest_lid_v01_pla.stl` |
 | false_bottom | `treasure-chest_false-bottom_v01_pla.stl` |
+| coin_pile | `treasure-chest_coin-pile_v01_pla.stl` |
+
+> **Note:** `pull_ring` is modeled separately but printed as one piece with `false_bottom` (bridged attachment, no supports).
 
 ---
 
@@ -153,6 +173,10 @@ treasure-chest_{component}_v01_pla.stl
 | FR-10 | No tools/glue needed for assembly | [ ] |
 | FR-11 | Lid stays on during normal handling | [ ] |
 | FR-12 | Lid removable with one hand | [ ] |
+| FR-13 | Coin pile covers pull ring when placed | [ ] |
+| FR-14 | Coin pile lifts out by hand | [ ] |
+| FR-15 | Coin pile visually resembles stacked coins | [ ] |
+| FR-16 | Coin pile is single fused piece | [ ] |
 
 ### Non-Functional Requirements
 
@@ -160,10 +184,13 @@ treasure-chest_{component}_v01_pla.stl
 |----|------|------|
 | NFR-01–05 | Measure exterior dimensions | [ ] |
 | NFR-06 | Measure hidden compartment depth ≥ 8mm | [ ] |
-| NFR-13 | Lid friction fit: snug, removable | [ ] |
-| NFR-14 | Tray slides freely, lifts easily | [ ] |
+| NFR-13 | Lid friction fit: holds when tilted 45°, removable by hand | [ ] |
+| NFR-14 | Tray lifts out with finger through ring (no tools) | [ ] |
 | NFR-19–21 | All parts printed without supports | [ ] |
 | NFR-22 | Total print time < 2 hours | [ ] |
+| NFR-27 | Coin pile fits inside chest with clearance | [ ] |
+| NFR-28 | Coin pile height ≤ 8mm (clears lid) | [ ] |
+| NFR-29 | Coin pile prints without supports | [ ] |
 
 ---
 
@@ -171,4 +198,5 @@ treasure-chest_{component}_v01_pla.stl
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v01 | — | Initial requirements |
+| v01 | 2026-01-03 | Initial requirements |
+| v01.1 | 2026-01-03 | Added coin pile component (FR-13–16, NFR-25–29) |
