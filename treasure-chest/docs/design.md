@@ -166,10 +166,84 @@ FUNCTION sketch_barrel_arc(sketch, width, height):
 
     arc = arcs.addByThreePoints(left, peak, right)
 
-    # Close with baseline
-    lines.addByTwoPoints(left, right)
+    # Close with baseline (reverse direction to ensure closed loop)
+    baseline = lines.addByTwoPoints(right, left)
+
+    # Add coincident constraints to ensure closure
+    constraints = sketch.geometricConstraints
+    constraints.addCoincident(arc.endSketchPoint, baseline.startSketchPoint)
+    constraints.addCoincident(baseline.endSketchPoint, arc.startSketchPoint)
 
     RETURN sketch.profiles.item(0)
+```
+
+### 5.3 Find Top Face
+
+```
+FUNCTION find_top_face(body):
+    """Find the face with highest Z centroid"""
+    max_z = -INFINITY
+    top_face = NULL
+
+    FOR face IN body.faces:
+        centroid = face.centroid
+        IF centroid.z > max_z:
+            max_z = centroid.z
+            top_face = face
+
+    RETURN top_face
+```
+
+### 5.4 Find Bottom Face
+
+```
+FUNCTION find_bottom_face(body):
+    """Find the face with lowest Z centroid"""
+    min_z = INFINITY
+    bottom_face = NULL
+
+    FOR face IN body.faces:
+        centroid = face.centroid
+        IF centroid.z < min_z:
+            min_z = centroid.z
+            bottom_face = face
+
+    RETURN bottom_face
+```
+
+### 5.5 Find Ring Profile (between nested rectangles)
+
+```
+FUNCTION find_ring_profile(sketch):
+    """Find the ring-shaped profile between two nested rectangles"""
+    # After sketching nested rectangles, Fusion creates multiple profiles:
+    # - Profile 0: inner rectangle
+    # - Profile 1: ring between inner and outer
+    # - Profile 2: outer rectangle (if not bounded)
+
+    # The ring profile has area between inner and outer
+    FOR i IN range(sketch.profiles.count):
+        profile = sketch.profiles.item(i)
+        # Ring profile is typically index 1 for nested rectangles
+        IF i == 1:
+            RETURN profile
+
+    # Fallback: return largest non-outer profile
+    RETURN sketch.profiles.item(1)
+```
+
+### 5.6 Create Offset Plane
+
+```
+FUNCTION create_offset_plane(component, z_offset):
+    """Create XY plane offset by z_offset in Z direction"""
+    planes = component.constructionPlanes
+    plane_input = planes.createInput()
+    plane_input.setByOffset(
+        component.xYConstructionPlane,
+        ValueInput.createByReal(z_offset)
+    )
+    RETURN planes.add(plane_input)
 ```
 
 ---
@@ -228,22 +302,34 @@ FUNCTION create_chest_body(root_comp, params):
     ext_input = extrudes.createInput(profile, FeatureOperations.NewBodyFeatureOperation)
     ext_input.setDistanceExtent(False, ValueInput.createByReal(height))
     body_feature = extrudes.add(ext_input)
+    body = body_feature.bodies.item(0)
 
-    # 5. Shell (remove top face, keep floor)
+    # 5. Shell (remove top AND bottom faces to create open box)
     shells = comp.features.shellFeatures
-    top_face = find_top_face(body_feature.bodies.item(0))
-    shell_input = shells.createInput([top_face])
+    top_face = find_top_face(body)
+    bottom_face = find_bottom_face(body)
+    shell_input = shells.createInput([top_face, bottom_face])
     shell_input.insideThickness = ValueInput.createByReal(wall)
     shells.add(shell_input)
 
-    # 6. Create ledge - offset plane method
+    # 6. Add floor back (fills bottom opening with correct thickness)
+    floor_sketch = comp.sketches.add(comp.xYConstructionPlane)
+    floor_profile = sketch_centered_rect(floor_sketch,
+                                          width - 2 * wall,
+                                          depth - 2 * wall)
+    floor_input = extrudes.createInput(floor_profile, FeatureOperations.JoinFeatureOperation)
+    floor_input.setDistanceExtent(False, ValueInput.createByReal(floor_t))
+    extrudes.add(floor_input)
+
+    # 7. Create ledge - offset plane method
+    ledge_thickness = 0.5  # mm, thickness of ledge shelf
     planes = comp.constructionPlanes
     plane_input = planes.createInput()
     offset = floor_t + ledge_z
     plane_input.setByOffset(comp.xYConstructionPlane, ValueInput.createByReal(offset))
     ledge_plane = planes.add(plane_input)
 
-    # 7. Sketch ledge profile (inward rectangle on all sides)
+    # 8. Sketch ledge profile (inward rectangle on all sides)
     ledge_sketch = comp.sketches.add(ledge_plane)
     inside_w = width - 2 * wall
     inside_d = depth - 2 * wall
@@ -254,12 +340,12 @@ FUNCTION create_chest_body(root_comp, params):
     # Get ring profile between rectangles
     ledge_profile = find_ring_profile(ledge_sketch)
 
-    # 8. Extrude ledge up (small height for support surface)
+    # 9. Extrude ledge up (thin shelf for tray support)
     ledge_input = extrudes.createInput(ledge_profile, FeatureOperations.JoinFeatureOperation)
-    ledge_input.setDistanceExtent(False, ValueInput.createByReal(0.5))  # thin ledge
+    ledge_input.setDistanceExtent(False, ValueInput.createByReal(ledge_thickness))
     extrudes.add(ledge_input)
 
-    RETURN comp
+    RETURN comp, ledge_thickness  # Return ledge_thickness for tray positioning
 ```
 
 #### Print Orientation
@@ -384,7 +470,7 @@ Removable tray with integrated pull ring for accessing hidden compartment.
 #### Algorithm
 
 ```
-FUNCTION create_false_bottom(root_comp, params):
+FUNCTION create_false_bottom(root_comp, params, ledge_thickness):
     # 1. Create component
     occ = root_comp.occurrences.addNewComponent(Matrix3D())
     comp = occ.component
@@ -403,14 +489,16 @@ FUNCTION create_false_bottom(root_comp, params):
 
     tray_width = chest_width - 2 * wall - 2 * clearance
     tray_depth = chest_depth - 2 * wall - 2 * clearance
-    tray_z = floor_t + ledge_z  # Z position where tray sits
 
-    # 3. Position at ledge height
+    # Tray sits ON TOP of ledge (ledge_z + ledge_thickness)
+    tray_z = floor_t + ledge_z + ledge_thickness
+
+    # 3. Position at ledge top
     transform = Matrix3D()
     transform.translation = Vector3D(0, 0, tray_z)
     occ.transform = transform
 
-    # 4. Sketch tray rectangle on XY plane
+    # 4. Sketch tray rectangle on XY plane (component local origin)
     sketch = comp.sketches.add(comp.xYConstructionPlane)
     profile = sketch_centered_rect(sketch, tray_width, tray_depth)
 
@@ -428,36 +516,62 @@ FUNCTION create_false_bottom(root_comp, params):
 
     # Recess is rounded rectangle, sized for ring to sit in
     recess_width = ring_od + 2
-    recess_depth = ring_od / 2 + 1
-    recess_profile = sketch_centered_rect(recess_sketch, recess_width, recess_depth)
+    recess_depth_dim = ring_od / 2 + 1
+    recess_profile = sketch_centered_rect(recess_sketch, recess_width, recess_depth_dim)
 
     recess_input = extrudes.createInput(recess_profile, FeatureOperations.CutFeatureOperation)
     recess_input.setDistanceExtent(False, ValueInput.createByReal(-ring_wire / 2))
     extrudes.add(recess_input)
 
-    # 7. Create pull ring (bridged arch)
-    # Sketch ring cross-section on XZ plane
-    ring_sketch = comp.sketches.add(comp.xZConstructionPlane)
-    circles = ring_sketch.sketchCurves.sketchCircles
+    # 7. Create pull ring using SWEEP (not revolve)
+    # This creates an arch that bridges across the recess
 
-    # Circle center at ring radius from tray center, at tray surface
     ring_radius = ring_od / 2 - ring_wire / 2
-    center = Point3D(ring_radius, tray_thick, 0)
-    wire_circle = circles.addByCenterRadius(center, ring_wire / 2)
 
-    ring_profile = ring_sketch.profiles.item(0)
+    # 7a. Create path - semicircular arc at tray top surface
+    # Path plane at tray_thick height (top of tray, in local coords)
+    path_plane = create_offset_plane(comp, tray_thick)
+    path_sketch = comp.sketches.add(path_plane)
+    arcs = path_sketch.sketchCurves.sketchArcs
 
-    # 8. Revolve 180 degrees to create arch
-    revolves = comp.features.revolveFeatures
-    # Axis is Z-axis at tray center
-    axis = comp.zConstructionAxis
-    rev_input = revolves.createInput(ring_profile, axis, FeatureOperations.NewBodyFeatureOperation)
-    rev_input.setAngleExtent(False, ValueInput.createByReal(math.pi))  # 180 degrees
-    ring_feature = revolves.add(rev_input)
-    ring_body = ring_feature.bodies.item(0)
-    ring_body.name = "ring"
+    # Arc endpoints at ring anchors, peak at ring top
+    # Arc spans from (-ring_radius, 0) to (ring_radius, 0) in XY
+    # with peak at (0, ring_radius) - this creates arch in Y direction
+    start_pt = Point3D(-ring_radius, 0, 0)
+    peak_pt = Point3D(0, ring_radius, 0)
+    end_pt = Point3D(ring_radius, 0, 0)
+    path_arc = arcs.addByThreePoints(start_pt, peak_pt, end_pt)
 
-    RETURN comp
+    # 7b. Create wire profile - circle perpendicular to path start
+    # Profile plane at path start point, perpendicular to path
+    profile_plane = create_perpendicular_plane(comp, path_arc.startSketchPoint)
+    wire_sketch = comp.sketches.add(profile_plane)
+    circles = wire_sketch.sketchCurves.sketchCircles
+
+    # Circle centered at path start, radius = ring_wire / 2
+    wire_center = Point3D(0, 0, 0)  # Center at sketch origin (on path)
+    wire_circle = circles.addByCenterRadius(wire_center, ring_wire / 2)
+    wire_profile = wire_sketch.profiles.item(0)
+
+    # 7c. Sweep wire along path
+    sweeps = comp.features.sweepFeatures
+    sweep_input = sweeps.createInput(wire_profile, path_arc,
+                                      FeatureOperations.JoinFeatureOperation)
+    ring_feature = sweeps.add(sweep_input)
+
+    RETURN occ  # Return occurrence for assembly positioning
+```
+
+#### Helper: Create Perpendicular Plane
+
+```
+FUNCTION create_perpendicular_plane(comp, sketch_point):
+    """Create plane perpendicular to curve at sketch point"""
+    planes = comp.constructionPlanes
+    plane_input = planes.createInput()
+    # Use tangent plane at point - perpendicular to path
+    plane_input.setByTangentAtPoint(sketch_point.parentSketch, sketch_point)
+    RETURN planes.add(plane_input)
 ```
 
 #### Print Orientation
@@ -490,7 +604,7 @@ Decorative fused pile of gold coins that covers the pull ring.
 #### Algorithm
 
 ```
-FUNCTION create_coin_pile(root_comp, params):
+FUNCTION create_coin_pile(root_comp, params, tray_top_z):
     # 1. Create component
     occ = root_comp.occurrences.addNewComponent(Matrix3D())
     comp = occ.component
@@ -500,15 +614,20 @@ FUNCTION create_coin_pile(root_comp, params):
     coin_dia = params.itemByName("coin_dia").value
     coin_thick = params.itemByName("coin_thick").value
 
-    # Pile constraints
+    # Pile constraints (must fit inside chest and under lid)
     max_width = 18.0   # mm
     max_depth = 14.0   # mm
     max_height = 8.0   # mm
 
-    # 3. Define coin positions (x, y, z offset from base)
-    # Arranged to look like scattered/stacked pile
+    # 3. Position coin pile on top of false bottom
+    transform = Matrix3D()
+    transform.translation = Vector3D(0, 0, tray_top_z)
+    occ.transform = transform
+
+    # 4. Define coin positions (x, y, z offset from base)
+    # Arranged to look like scattered/stacked pile covering the ring area
     coin_positions = [
-        # Base layer (z = 0)
+        # Base layer (z = 0) - covers pull ring area
         (-3, -2, 0), (0, -3, 0), (3, -2, 0), (5, 0, 0),
         (-4, 1, 0), (-1, 0, 0), (2, 1, 0), (4, 3, 0),
         (-2, 3, 0), (1, 4, 0), (-5, -1, 0),
@@ -524,9 +643,8 @@ FUNCTION create_coin_pile(root_comp, params):
         (0, 1, 3*coin_thick), (1, 0, 4*coin_thick),
     ]
 
-    # 4. Create each coin and union
+    # 5. Create all coins as separate bodies first
     extrudes = comp.features.extrudeFeatures
-    combines = comp.features.combineFeatures
     bodies = []
 
     FOR (x, y, z) IN coin_positions:
@@ -535,7 +653,7 @@ FUNCTION create_coin_pile(root_comp, params):
         IF abs(y) + coin_dia/2 > max_depth/2: CONTINUE
         IF z + coin_thick > max_height: CONTINUE
 
-        # Create offset plane at z height
+        # Create offset plane at z height (or reuse if same z)
         plane = create_offset_plane(comp, z)
 
         # Sketch coin circle
@@ -546,23 +664,33 @@ FUNCTION create_coin_pile(root_comp, params):
 
         profile = sketch.profiles.item(0)
 
-        # Extrude coin
-        IF bodies IS EMPTY:
-            operation = FeatureOperations.NewBodyFeatureOperation
-        ELSE:
-            operation = FeatureOperations.JoinFeatureOperation
-
-        ext_input = extrudes.createInput(profile, operation)
+        # Extrude coin as new body
+        ext_input = extrudes.createInput(profile, FeatureOperations.NewBodyFeatureOperation)
         ext_input.setDistanceExtent(False, ValueInput.createByReal(coin_thick))
         coin_feature = extrudes.add(ext_input)
 
         bodies.append(coin_feature.bodies.item(0))
 
-    # 5. All coins are now unioned into single body
-    final_body = bodies[0]
+    # 6. Combine all bodies into one using single combine operation
+    IF len(bodies) > 1:
+        combines = comp.features.combineFeatures
+
+        # Create collection of tool bodies (all except first)
+        tool_bodies = ObjectCollection.create()
+        FOR i IN range(1, len(bodies)):
+            tool_bodies.add(bodies[i])
+
+        # Combine: target = first body, tools = all others
+        combine_input = combines.createInput(bodies[0], tool_bodies)
+        combine_input.operation = FeatureOperations.JoinFeatureOperation
+        combine_input.isKeepToolBodies = False  # Delete tool bodies after combine
+        combines.add(combine_input)
+
+    # 7. Name the final unified body
+    final_body = comp.bRepBodies.item(0)
     final_body.name = "coin_pile"
 
-    RETURN comp
+    RETURN occ  # Return occurrence for assembly
 ```
 
 #### Print Orientation
@@ -594,19 +722,22 @@ FUNCTION create_coin_pile(root_comp, params):
 └──────────┬──────────┘
            ▼
 ┌─────────────────────┐
-│  Create chest_body  │
+│  Create chest_body  │──→ Returns ledge_thickness
 └──────────┬──────────┘
+           │ ledge_thickness
            ▼
 ┌─────────────────────┐
 │  Create lid         │──→ Positioned at chest_height
 └──────────┬──────────┘
+           │
            ▼
 ┌─────────────────────┐
-│  Create false_bottom│──→ Positioned at ledge_z
+│  Create false_bottom│──→ Positioned at ledge_z + ledge_thickness
 └──────────┬──────────┘
+           │ tray_top_z
            ▼
 ┌─────────────────────┐
-│  Create coin_pile   │──→ Positioned on false_bottom
+│  Create coin_pile   │──→ Positioned at tray_top_z
 └──────────┬──────────┘
            ▼
 ┌─────────────────────┐
@@ -640,18 +771,34 @@ FUNCTION run(context):
         root = design.rootComponent
         root.name = "treasure-chest"
 
-        # Generate components in order
-        chest = create_chest_body(root, params)
-        lid = create_lid(root, params)
-        tray = create_false_bottom(root, params)
-        coins = create_coin_pile(root, params)
+        # Pre-calculate key dimensions for component positioning
+        floor_t = params.itemByName("floor").value
+        ledge_z = params.itemByName("ledge_z").value
+        tray_thick = params.itemByName("tray_thick").value
+
+        # Generate components in order (passing derived positions)
+
+        # 1. Chest body (returns ledge_thickness for tray positioning)
+        chest_occ, ledge_thickness = create_chest_body(root, params)
+
+        # 2. Lid (positions itself at chest_height)
+        lid_occ = create_lid(root, params)
+
+        # 3. False bottom (sits on top of ledge)
+        tray_occ = create_false_bottom(root, params, ledge_thickness)
+
+        # 4. Coin pile (sits on top of false bottom)
+        # Calculate tray top Z position
+        tray_top_z = floor_t + ledge_z + ledge_thickness + tray_thick
+        coins_occ = create_coin_pile(root, params, tray_top_z)
 
         # Verify assembly
         interference = check_interference(design)
         IF interference:
             ui.messageBox("Warning: Component interference detected")
 
-        ui.messageBox("Treasure chest generated successfully!")
+        ui.messageBox("Treasure chest generated successfully!\n" +
+                      f"Components: chest_body, lid, false_bottom, coin_pile")
 
     EXCEPT Exception as e:
         ui.messageBox(f"Error: {traceback.format_exc()}")
@@ -665,6 +812,8 @@ FUNCTION run(context):
 
 ```
 FUNCTION check_interference(design):
+    app = Application.get()
+    ui = app.userInterface
     root = design.rootComponent
     bodies = []
 
@@ -675,12 +824,18 @@ FUNCTION check_interference(design):
 
     # Check each pair
     interference_found = False
+    interference_list = []
+
     FOR i IN range(len(bodies)):
         FOR j IN range(i+1, len(bodies)):
             result = bodies[i].interferesWith(bodies[j])
             IF result:
                 interference_found = True
-                LOG(f"Interference: {bodies[i].name} vs {bodies[j].name}")
+                interference_list.append(f"{bodies[i].name} vs {bodies[j].name}")
+
+    # Report any interferences found
+    IF interference_found:
+        ui.messageBox("Interference detected:\n" + "\n".join(interference_list))
 
     RETURN interference_found
 ```
@@ -822,6 +977,7 @@ EXCEPT:
 | Version | Date | Changes |
 |---------|------|---------|
 | v01 | 2026-01-03 | Initial scripted design |
+| v01.1 | 2026-01-03 | Fixed: shell operation (add floor back), pull ring (sweep not revolve), component positioning, helper functions, coin union strategy |
 
 ---
 
