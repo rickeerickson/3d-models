@@ -9,7 +9,11 @@
 
 ## 1. Design Overview
 
-A four-piece treasure chest for D&D tabletop gaming with a hidden compartment accessed via a false bottom. All geometry is generated programmatically using Fusion 360 Python scripts.
+A treasure chest for D&D tabletop gaming with a hidden compartment accessed via a false bottom. All geometry is generated programmatically using Fusion 360 Python scripts.
+
+**Components:** 5 modeled (chest_body, lid, false_bottom, pull_ring, coin_pile) → **4 printed pieces** (pull_ring is integrated into false_bottom).
+
+> **⚠️ UNIT CONVERSION:** Fusion 360 API uses **centimeters (cm)** internally. All `ValueInput.createByReal()` calls expect cm. Parameter `.value` returns cm. Convert: `mm_value / 10` before API calls, `cm_value * 10` after reads.
 
 ```
 ┌─────────────────────────┐
@@ -80,6 +84,9 @@ All dimensions are defined as Fusion user parameters for easy iteration.
 | `tray_thick` | 1.6 | mm | False bottom thickness |
 | `coin_dia` | 4.0 | mm | Coin diameter |
 | `coin_thick` | 0.8 | mm | Coin thickness |
+| `ledge_thick` | 0.5 | mm | Ledge shelf thickness |
+| `rim_depth` | 3.0 | mm | Lid rim depth into body |
+| `rim_wall` | 1.5 | mm | Lid rim wall thickness |
 
 ### 3.1 Derived Values
 
@@ -322,7 +329,7 @@ FUNCTION create_chest_body(root_comp, params):
     extrudes.add(floor_input)
 
     # 7. Create ledge - offset plane method
-    ledge_thickness = 0.5  # mm, thickness of ledge shelf
+    ledge_thickness = params.itemByName("ledge_thick").value
     planes = comp.constructionPlanes
     plane_input = planes.createInput()
     offset = floor_t + ledge_z
@@ -397,8 +404,8 @@ FUNCTION create_lid(root_comp, params):
 
     lid_width = chest_width - 2 * clearance
     lid_depth = chest_depth - 2 * clearance
-    rim_depth = 3.0  # mm, how far rim extends into body
-    rim_wall = 1.5   # mm, rim wall thickness
+    rim_depth = params.itemByName("rim_depth").value
+    rim_wall = params.itemByName("rim_wall").value
 
     # 3. Position at top of chest body
     transform = Matrix3D()
@@ -544,7 +551,7 @@ FUNCTION create_false_bottom(root_comp, params, ledge_thickness):
 
     # 7b. Create wire profile - circle perpendicular to path start
     # Profile plane at path start point, perpendicular to path
-    profile_plane = create_perpendicular_plane(comp, path_arc.startSketchPoint)
+    profile_plane = create_perpendicular_plane(comp, path_arc, 0.0)
     wire_sketch = comp.sketches.add(profile_plane)
     circles = wire_sketch.sketchCurves.sketchCircles
 
@@ -565,14 +572,29 @@ FUNCTION create_false_bottom(root_comp, params, ledge_thickness):
 #### Helper: Create Perpendicular Plane
 
 ```
-FUNCTION create_perpendicular_plane(comp, sketch_point):
-    """Create plane perpendicular to curve at sketch point"""
+FUNCTION create_perpendicular_plane(comp, path_curve, t_param=0.0):
+    """Create plane perpendicular to curve at parameter t (0.0 = start, 1.0 = end)"""
     planes = comp.constructionPlanes
     plane_input = planes.createInput()
-    # Use tangent plane at point - perpendicular to path
-    plane_input.setByTangentAtPoint(sketch_point.parentSketch, sketch_point)
+
+    # Get curve geometry and evaluate at parameter
+    evaluator = path_curve.geometry.evaluator
+    (success, point, tangent) = evaluator.getFirstDerivative(t_param)
+
+    IF NOT success:
+        # Fallback: use XZ plane at curve start point
+        plane_input.setByOffset(comp.xZConstructionPlane,
+                                 ValueInput.createByReal(0))
+        RETURN planes.add(plane_input)
+
+    # Create plane at point with normal = tangent direction
+    # Use setByTangent with the curve and a point on it
+    plane_input.setByTangent(path_curve, path_curve.startSketchPoint)
+
     RETURN planes.add(plane_input)
 ```
+
+> **Note:** `setByTangent()` creates a plane tangent to the curve at the point. For sweep profiles, this is perpendicular to the path direction, which is what we need.
 
 #### Print Orientation
 - Flat (tray on build plate)
@@ -676,7 +698,7 @@ FUNCTION create_coin_pile(root_comp, params, tray_top_z):
         combines = comp.features.combineFeatures
 
         # Create collection of tool bodies (all except first)
-        tool_bodies = ObjectCollection.create()
+        tool_bodies = adsk.core.ObjectCollection.create()
         FOR i IN range(1, len(bodies)):
             tool_bodies.add(bodies[i])
 
@@ -978,6 +1000,7 @@ EXCEPT:
 |---------|------|---------|
 | v01 | 2026-01-03 | Initial scripted design |
 | v01.1 | 2026-01-03 | Fixed: shell operation (add floor back), pull ring (sweep not revolve), component positioning, helper functions, coin union strategy |
+| v01.2 | 2026-01-03 | Review fixes: unit conversion docs, added `ledge_thick`/`rim_depth`/`rim_wall` params, fixed perpendicular plane API, fixed ObjectCollection namespace, updated Appendix |
 
 ---
 
@@ -993,8 +1016,10 @@ EXCEPT:
 | `Sketch` | 2D geometry for profiles |
 | `ExtrudeFeature` | Create bodies from profiles |
 | `ShellFeature` | Hollow out bodies |
-| `RevolveFeature` | Rotate profiles around axis |
+| `SweepFeature` | Sweep profiles along paths |
+| `CombineFeature` | Boolean operations on bodies |
 | `UserParameter` | Named parametric values |
+| `ObjectCollection` | Collection of API objects (`adsk.core.ObjectCollection`) |
 
 ### Units
 

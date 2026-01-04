@@ -60,7 +60,7 @@
 | ID | Requirement | Value | Rationale |
 |----|-------------|-------|-----------|
 | NFR-07 | Wall thickness | 2.0 mm | 5 perimeters @ 0.4mm nozzle |
-| NFR-08 | Floor thickness | 1.6 mm | 4 layers @ 0.2mm height |
+| NFR-08 | Floor thickness | 1.6 mm | 8 layers @ 0.2mm height |
 | NFR-09 | Ledge protrusion | 1.2 mm | 3 perimeters, supports tray |
 | NFR-10 | False bottom thickness | 1.6 mm | Rigid, matches floor |
 | NFR-11 | Pull ring wire diameter | 1.6 mm | 4 perimeters, won't snap |
@@ -135,6 +135,9 @@
 | `tray_thick` | 1.6 | mm | NFR-10 |
 | `coin_dia` | 4.0 | mm | NFR-25 |
 | `coin_thick` | 0.8 | mm | NFR-26 |
+| `ledge_thick` | 0.5 | mm | (design detail) |
+| `rim_depth` | 3.0 | mm | (design detail) |
+| `rim_wall` | 1.5 | mm | (design detail) |
 
 ---
 
@@ -200,3 +203,4 @@ treasure-chest_{component}_v01_pla.stl
 |---------|------|---------|
 | v01 | 2026-01-03 | Initial requirements |
 | v01.1 | 2026-01-03 | Added coin pile component (FR-13–16, NFR-25–29) |
+| v01.2 | 2026-01-03 | Fixed NFR-08 layer calc (8 layers), added design params (ledge_thick, rim_depth, rim_wall) |
